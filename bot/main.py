@@ -1326,16 +1326,21 @@ class TowersView(discord.ui.View):
         ))
 
 
-@bot.tree.command(name="towers", description="Play Towers — pick the safe tile each row and climb to the top!")
+@bot.tree.command(name="towers", description="Play Towers. Pick the safe tile each row and climb. 4 tiles, 1 bomb per row.")
 @app_commands.describe(
     amount="Bet amount in dices",
+    rows="Number of rows to climb (3 to 10, default 8)",
 )
 async def towers(
     interaction: discord.Interaction,
     amount: float,
+    rows: int = 8,
 ):
     if amount <= 0:
         await interaction.response.send_message("Bet amount must be greater than 0.", ephemeral=True)
+        return
+    if rows < 3 or rows > 10:
+        await interaction.response.send_message("Rows must be between 3 and 10.", ephemeral=True)
         return
 
     total_bal = get_total_balance(interaction.user.id)
@@ -1349,7 +1354,7 @@ async def towers(
     add_balance(interaction.user.id, -amount)
     start_active_game(interaction.user.id, "Towers", amount)
 
-    view = TowersView(user_id=interaction.user.id, bet_amount=amount, total_rows=8)
+    view = TowersView(user_id=interaction.user.id, bet_amount=amount, total_rows=rows)
     embed = view.get_embed(status="active")
     await interaction.response.send_message(embed=embed, view=view)
 

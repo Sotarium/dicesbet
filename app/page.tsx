@@ -1,16 +1,22 @@
 "use client";
 
+import { AsciiCanvas } from "@/components/AsciiCanvas";
+
 export default function Home() {
   return (
     <main className="home-container">
-      {/* SolPrime hero lines background */}
-      <div className="home-bg-canvas" style={{
-        backgroundImage: 'url("https://www.solprime.io/figma/rm-hero-lines.webp")',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat',
-        opacity: 0.35,
-      }} />
+      {/* Animated dot background */}
+      <AsciiCanvas
+        className="home-bg-canvas"
+        mode="dots"
+        color="#3a3a4a"
+        cellSize={18}
+        speed={10}
+        intensity={9}
+        noiseScale={12}
+        waveTension={5}
+        direction="left"
+      />
 
       <div className="home-content">
         <div className="logo-wrapper">
