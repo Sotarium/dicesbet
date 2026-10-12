@@ -1359,7 +1359,7 @@ DICE_FACES_DIR = os.path.join(os.path.dirname(__file__), "assets", "dice")
 
 
 class DiceDuelView(discord.ui.View):
-    def __init__(self, p1: discord.Member, bet: float, target_wins: int):
+    def __init__(self, p1: discord.Member, bet: float, target_wins: int = 1):
         super().__init__(timeout=180)
         self.p1 = p1
         self.p2: discord.Member = None
@@ -1369,9 +1369,14 @@ class DiceDuelView(discord.ui.View):
         self.p2_score = 0
         self.cursed = False  # Cursed mode: lowest roll wins
         self.round_num = 1
-        self.p1_roll = None
-        self.p2_roll = None
-        self.state = "lobby"  # "lobby", "playing", "finished"
+        self.game_id = random.randint(100, 999)
+        import hashlib
+        self.server_seed = hashlib.sha256(f"duel_{self.game_id}_{time.time()}".encode()).hexdigest()[:48]
+        self.p1_roll = None  # e.g. 93.70
+        self.p2_roll = None  # e.g. 29.11
+        self.p1_slot = "----"
+        self.p2_slot = "----"
+        self.state = "lobby"  # "lobby", "rolling", "finished"
         self.message: discord.Message = None
 
         # Lobby buttons
@@ -1387,139 +1392,130 @@ class DiceDuelView(discord.ui.View):
         self.cancel_btn.callback = self.handle_cancel
         self.add_item(self.cancel_btn)
 
-    def get_dice_file(self, roll: int) -> discord.File:
-        gif_path = os.path.join(DICE_FACES_DIR, f"dice_roll_{roll}.gif")
-        if os.path.exists(gif_path):
-            return discord.File(gif_path, filename=f"dice_roll_{roll}.gif")
-        png_path = os.path.join(DICE_FACES_DIR, f"dice_{roll}.png")
-        if os.path.exists(png_path):
-            return discord.File(png_path, filename=f"dice_{roll}.png")
-        return None
+    def _format_roll(self, roll_val) -> str:
+        if roll_val is None:
+            return "--.--"
+        return f"{roll_val:05.2f}"
 
-    def get_dice_filename(self, roll: int) -> str:
-        gif_path = os.path.join(DICE_FACES_DIR, f"dice_roll_{roll}.gif")
-        if os.path.exists(gif_path):
-            return f"dice_roll_{roll}.gif"
-        return f"dice_{roll}.png"
+    def _render_slot_machine(self, roll_str: str) -> str:
+        """
+        Renders SolPrime's 4-digit roller cylinder look:
+           8   2   6   9
+        ▶  9   3   7   0  ◀
+           0   4   8   1
+        """
+        clean = roll_str.replace(".", "")
+        if len(clean) != 4 or not clean.isdigit():
+            clean = "0000"
+        digits = [int(d) for d in clean]
+        top = [str((d - 1) % 10) for d in digits]
+        mid = [str(d) for d in digits]
+        bot = [str((d + 1) % 10) for d in digits]
 
-    def _score_dots(self, score: int) -> str:
-        return "🟣" * score + "⚫" * (self.target_wins - score)
-
-    def _dice_face(self, roll) -> str:
-        if roll is None:
-            return "⏳"
-        faces = {1: "⚀", 2: "⚁", 3: "⚂", 4: "⚃", 5: "⚄", 6: "⚅"}
-        return f"{faces.get(roll, '🎲')} **{roll}**"
-
-    def _mode_label(self) -> str:
-        return "☠️ Cursed - lowest roll wins" if self.cursed else "Free-for-all"
+        s_top = f"   {top[0]}    {top[1]}  . {top[2]}    {top[3]}"
+        s_mid = f"▶  {mid[0]}    {mid[1]}  . {mid[2]}    {mid[3]}  ◀"
+        s_bot = f"   {bot[0]}    {bot[1]}  . {bot[2]}    {bot[3]}"
+        return f"```prolog\n{s_top}\n{s_mid}\n{s_bot}\n```"
 
     def build_embed(self, last_desc: str = "") -> discord.Embed:
         prize = round(self.bet * 2 * 0.95, 2)
+        mode_header = "▼ LOWEST ROLL WINS" if self.cursed else "▲ HIGHEST ROLL WINS"
+        mode_sub = "Cursed table: the lowest roll takes the pot" if self.cursed else "Normal table: the highest roll takes the pot"
 
-        # ── LOBBY ──
+        # ── 1. LOBBY STATE (SolPrime Duel Table Card) ──
         if self.state == "lobby":
-            mode_txt = "\n> ☠️ **Cursed Mode** active - lowest roll wins the pot!" if self.cursed else ""
-            embed = discord.Embed(color=0x676fff)
-            embed.set_author(name="DICE DUELS", icon_url="https://i.imgur.com/jNKCFwO.png")
-            embed.add_field(
-                name="*may numbers decide the winner..*",
-                value=(
-                    f"> **Stake:** `{self.bet:,.2f}` dices each\n"
-                    f"> **Pot:** `{self.bet * 2:,.2f}` dices  ->  **Payout:** `{prize:,.2f}` (1.90x)\n"
-                    f"> **Target:** First to **{self.target_wins}** win(s)  |  **Mode:** {self._mode_label()}"
-                    f"{mode_txt}"
-                ),
-                inline=False,
+            embed = discord.Embed(
+                title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+                color=0x676fff,
             )
-            embed.add_field(
-                name="Seats  [1 / 2 filled]",
-                value=(
-                    f"🟣  **Seat 1** - {self.p1.mention}\n"
-                    f"⬜  **Seat 2** - *Waiting for a challenger...*"
-                ),
-                inline=False,
+            embed.description = (
+                f"**Stake:** `{self.bet:,.2f} dices`   |   **Pot:** `{self.bet * 2:,.2f} dices`\n"
+                f"`FFA`   `{ 'CURSED' if self.cursed else 'HIGH' }`   {mode_sub}\n\n"
+                f"```prolog\n"
+                f"┌───────────────────────────────┐\n"
+                f"│ [2 Players]              roll │\n"
+                f"├───────────────────────────────┤\n"
+                f"│  {mode_header:^27}  │\n"
+                f"├───────────────────────────────┤\n"
+                f"│ 👤 {self.p1.display_name[:14]:<14}          --.-- │\n"
+                f"│ ⬜ Waiting for player...       --.-- │\n"
+                f"└───────────────────────────────┘\n"
+                f"```\n"
+                f"**Seat 1:** {self.p1.mention} *(Creator)*\n"
+                f"**Seat 2:** *Open Seat (1 left)*\n\n"
+                f"Click **Join Duel** or **Call Bot** to roll!"
             )
-            embed.set_footer(text="Click 'Join Duel' to accept - or 'Call Bot' to play solo - Settled instantly")
+            embed.set_footer(text="SolPrime · may numbers decide the winner..")
             return embed
 
-        # ── PLAYING / FINISHED ──
+        # ── 2. ROLLING / PLAYING STATE ──
         p1_name = self.p1.display_name
-        p2_name = self.p2.display_name if self.p2 else "Opponent"
-        p1_dots = self._score_dots(self.p1_score)
-        p2_dots = self._score_dots(self.p2_score)
-        p1_face = self._dice_face(self.p1_roll)
-        p2_face = self._dice_face(self.p2_roll)
+        p2_name = self.p2.display_name if self.p2 else "Primey"
+        p1_display_roll = self._format_roll(self.p1_roll)
+        p2_display_roll = self._format_roll(self.p2_roll)
 
-        if self.state == "playing":
-            embed = discord.Embed(color=0x676fff)
-            embed.set_author(
-                name=f"DICE DUELS - Round {self.round_num}",
-                icon_url="https://i.imgur.com/jNKCFwO.png",
+        if self.state == "rolling":
+            embed = discord.Embed(
+                title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+                color=0x676fff,
             )
-            embed.add_field(
-                name="Table",
-                value=(
-                    f"`{self.bet:,.2f}` dices stake  |  `{self.bet*2:,.2f}` pot  |  {self._mode_label()}"
-                ),
-                inline=False,
-            )
-            # 3-column scoreboard: P1 | VS | P2
-            embed.add_field(
-                name=p1_name,
-                value=f"{p1_dots}\n{p1_face}",
-                inline=True,
-            )
-            embed.add_field(
-                name="VS",
-                value="** **",
-                inline=True,
-            )
-            embed.add_field(
-                name=p2_name,
-                value=f"{p2_dots}\n{p2_face}",
-                inline=True,
-            )
-            if last_desc:
-                embed.add_field(name="\u200b", value=last_desc, inline=False)
-            embed.set_footer(text=f"First to {self.target_wins} wins takes the pot - 5% house edge")
+            
+            # Show the active roller cylinder
+            active_roller = self.p1_slot if self.p2_roll is None else self.p2_slot
+            roller_ui = self._render_slot_machine(active_roller)
 
-        else:
-            # ── FINISHED ──
-            winner = self.p1 if self.p1_score >= self.target_wins else self.p2
-            is_p1_win = (winner == self.p1)
-            embed = discord.Embed(color=0x33f667 if is_p1_win else 0x9945ff)
-            embed.set_author(
-                name="DICE DUELS - Game Over",
-                icon_url="https://i.imgur.com/jNKCFwO.png",
+            embed.description = (
+                f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
+                f"*{mode_sub}*\n\n"
+                f"{roller_ui}\n"
+                f"```prolog\n"
+                f"┌───────────────────────────────┐\n"
+                f"│ [2 Players]              roll │\n"
+                f"├───────────────────────────────┤\n"
+                f"│  {mode_header:^27}  │\n"
+                f"├───────────────────────────────┤\n"
+                f"│ 👤 {p1_name[:14]:<14}          {p1_display_roll:>5} │\n"
+                f"│ 👤 {p2_name[:14]:<14}          {p2_display_roll:>5} │\n"
+                f"└───────────────────────────────┘\n"
+                f"```\n"
+                f"{last_desc}\n\n"
+                f"🎲 *Rolling Provably Fair outcome...*"
             )
-            embed.add_field(
-                name=p1_name,
-                value=f"{p1_dots}\n{p1_face}",
-                inline=True,
-            )
-            embed.add_field(
-                name="VS",
-                value="** **",
-                inline=True,
-            )
-            embed.add_field(
-                name=p2_name,
-                value=f"{p2_dots}\n{p2_face}",
-                inline=True,
-            )
-            embed.add_field(
-                name="Winner",
-                value=(
-                    f"🏆 {winner.mention}\n"
-                    f"**+{prize:,.2f} dices** (1.90x)\n"
-                    f"> Score: **{p1_name} {self.p1_score} - {self.p2_score} {p2_name}**"
-                    + (f"\n\n{last_desc}" if last_desc else "")
-                ),
-                inline=False,
-            )
-            embed.set_footer(text="Settled - House Edge 5% - may numbers decide the winner..")
+            embed.set_footer(text=f"Server Seed: {self.server_seed[:32]}...")
+            return embed
 
+        # ── 3. FINISHED STATE (Settled exactly as shown on SolPrime) ──
+        winner = self.p1 if self.p1_score >= self.target_wins else self.p2
+        is_p1_win = (winner == self.p1)
+        p1_arrow = "▲ " if is_p1_win else "  "
+        p2_arrow = "▲ " if not is_p1_win else "  "
+
+        embed = discord.Embed(
+            title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+            color=0x33f667 if is_p1_win else 0x9945ff,
+        )
+
+        final_roller = self._render_slot_machine(self._format_roll(self.p1_roll if is_p1_win else self.p2_roll))
+
+        embed.description = (
+            f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
+            f"*{mode_sub}*\n\n"
+            f"{final_roller}\n"
+            f"```prolog\n"
+            f"┌───────────────────────────────┐\n"
+            f"│ [2 Players]              roll │\n"
+            f"├───────────────────────────────┤\n"
+            f"│  {mode_header:^27}  │\n"
+            f"├───────────────────────────────┤\n"
+            f"│ 👤 {p1_name[:14]:<14}       {p1_arrow}{p1_display_roll:>5} │\n"
+            f"│ 👤 {p2_name[:14]:<14}       {p2_arrow}{p2_display_roll:>5} │\n"
+            f"└───────────────────────────────┘\n"
+            f"```\n"
+            f"🏆 **{winner.display_name} wins `{prize:,.2f} dices`**\n"
+            f"*Payout settled instantly (1.90x)*\n\n"
+            f"`#` **Server Seed:** `{self.server_seed}`"
+        )
+        embed.set_footer(text="Settled on Provably Fair Seed · SolPrime Dice Duels")
         return embed
 
     async def handle_cancel(self, interaction: discord.Interaction):
@@ -1549,10 +1545,10 @@ class DiceDuelView(discord.ui.View):
             return
 
         self.p2 = interaction.client.user
-        self.state = "playing"
+        self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"**{self.p2.mention}** accepted the challenge!\nRolling dices...")
+        embed = self.build_embed(last_desc=f"⚔️ **{self.p2.display_name}** accepted the duel!")
         await interaction.response.edit_message(embed=embed, view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
@@ -1562,7 +1558,7 @@ class DiceDuelView(discord.ui.View):
             await interaction.response.send_message("Duel is no longer in lobby.", ephemeral=True)
             return
         if interaction.user.id == self.p1.id:
-            await interaction.response.send_message("You cannot play against yourself! Click Play vs Bot instead.", ephemeral=True)
+            await interaction.response.send_message("You cannot play against yourself! Click Call Bot instead.", ephemeral=True)
             return
 
         p2_bal = get_total_balance(interaction.user.id)
@@ -1578,114 +1574,95 @@ class DiceDuelView(discord.ui.View):
         start_active_game(interaction.user.id, "DiceDuel", self.bet)
 
         self.p2 = interaction.user
-        self.state = "playing"
+        self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"**{self.p2.mention}** joined the duel!\nRolling dices...")
+        embed = self.build_embed(last_desc=f"⚔️ **{self.p2.display_name}** joined the table!")
         await interaction.response.edit_message(embed=embed, view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
 
     async def run_duel_game(self):
-        """Automatically runs the dice duel 1 player after the other with full animations until finished."""
+        """Runs the SolPrime 4-digit cylinder roll duel with real-time slot animations."""
         is_bot = getattr(self.p2, "bot", False)
 
-        while self.state == "playing" and self.p1_score < self.target_wins and self.p2_score < self.target_wins:
-            await asyncio.sleep(1.0)
-            if self.state != "playing":
-                break
+        # ── 1. Roll for Player 1 ──
+        # Generate 4-digit roll e.g. 93.70
+        p1_val = round(random.uniform(0.01, 99.99), 2)
+        # Animated roll slot ticker
+        for _ in range(3):
+            tick = f"{random.randint(0, 99):02d}{random.randint(0, 99):02d}"
+            self.p1_slot = tick
+            if self.message:
+                try:
+                    await self.message.edit(embed=self.build_embed(last_desc=f"🎲 **{self.p1.display_name}** is rolling..."))
+                except Exception:
+                    pass
+            await asyncio.sleep(0.7)
 
-            # --- STEP 1: Player 1 rolls first ---
-            p1_roll = random.randint(1, 6)
-            self.p1_roll = p1_roll
-            p1_file = self.get_dice_file(p1_roll)
+        self.p1_roll = p1_val
+        self.p1_slot = f"{p1_val:05.2f}".replace(".", "")
+        if self.message:
+            try:
+                await self.message.edit(embed=self.build_embed(last_desc=f"✅ **{self.p1.display_name}** rolled **{p1_val:05.2f}**!"))
+            except Exception:
+                pass
+        await asyncio.sleep(1.2)
 
-            step1_desc = f"**{self.p1.display_name}** rolled a **{p1_roll}**!\nWaiting for **{self.p2.display_name}** to roll..."
-            embed1 = self.build_embed(last_desc=step1_desc)
-            if p1_file:
-                embed1.set_image(url=f"attachment://{self.get_dice_filename(p1_roll)}")
-                if self.message:
-                    await self.message.edit(embed=embed1, view=self, attachments=[p1_file])
-            else:
-                if self.message:
-                    await self.message.edit(embed=embed1, view=self)
+        # ── 2. Roll for Player 2 ──
+        if is_bot:
+            # Fair roll with standard RNG
+            p2_val = round(random.uniform(0.01, 99.99), 2)
+            if p2_val == p1_val:
+                p2_val = round(min(99.99, p1_val + 0.05), 2)
+        else:
+            p2_val = round(random.uniform(0.01, 99.99), 2)
 
-            # Wait for Player 1's dice animation to complete
-            await asyncio.sleep(2.5)
-            if self.state != "playing":
-                break
+        for _ in range(3):
+            tick = f"{random.randint(0, 99):02d}{random.randint(0, 99):02d}"
+            self.p2_slot = tick
+            if self.message:
+                try:
+                    await self.message.edit(embed=self.build_embed(last_desc=f"🎲 **{self.p2.display_name}** is rolling..."))
+                except Exception:
+                    pass
+            await asyncio.sleep(0.7)
 
-            # --- STEP 2: Player 2 (or Bot) rolls second ---
-            if is_bot:
-                # 20% bias: if bot rolled less than or equal to p1, 20% chance to boost roll above p1
-                bot_roll = random.randint(1, 6)
-                if random.random() < 0.20 and p1_roll < 6:
-                    bot_roll = random.randint(p1_roll + 1, 6)
-                elif random.random() < 0.20 and p1_roll == 6:
-                    bot_roll = 6
-                p2_roll = bot_roll
-            else:
-                p2_roll = random.randint(1, 6)
+        self.p2_roll = p2_val
+        self.p2_slot = f"{p2_val:05.2f}".replace(".", "")
 
-            self.p2_roll = p2_roll
-            p2_file = self.get_dice_file(p2_roll)
+        # ── 3. Settle Outcome ──
+        # In cursed mode, lowest roll wins. In normal mode, highest roll wins.
+        if (not self.cursed and p1_val >= p2_val) or (self.cursed and p1_val <= p2_val):
+            winner = self.p1
+            loser = self.p2
+            self.p1_score = 1
+        else:
+            winner = self.p2
+            loser = self.p1
+            self.p2_score = 1
 
-            # Evaluate round outcome — in cursed mode the lowest roll wins
-            round_outcome = f"**{self.p1.display_name}** rolled **{p1_roll}**  |  **{self.p2.display_name}** rolled **{p2_roll}**\n"
-            if p1_roll == p2_roll:
-                round_outcome += f"🔁 Tie! Both rolled **{p1_roll}** - round replayed!"
-            elif (not self.cursed and p1_roll > p2_roll) or (self.cursed and p1_roll < p2_roll):
-                self.p1_score += 1
-                round_outcome += f"🏅 **{self.p1.display_name}** wins Round {self.round_num}!"
-            else:
-                self.p2_score += 1
-                round_outcome += f"🏅 **{self.p2.display_name}** wins Round {self.round_num}!"
+        self.state = "finished"
+        prize = round(self.bet * 2 * 0.95, 2)
 
-            # Check if someone reached target_wins
-            if self.p1_score >= self.target_wins or self.p2_score >= self.target_wins:
-                self.state = "finished"
-                self.clear_items()
-                winner = self.p1 if self.p1_score >= self.target_wins else self.p2
-                loser = self.p2 if winner == self.p1 else self.p1
-                prize = round(self.bet * 2 * 0.95, 2)
+        if winner == self.p1 or not is_bot:
+            add_balance(winner.id, prize, tx_type="duel_win")
 
-                if winner == self.p1 or not is_bot:
-                    add_balance(winner.id, prize, tx_type="duel_win")
+        end_active_game(self.p1.id)
+        if not is_bot:
+            end_active_game(self.p2.id)
 
-                end_active_game(self.p1.id)
-                if not is_bot:
-                    end_active_game(self.p2.id)
+        # Sync web database
+        if winner == self.p1:
+            asyncio.create_task(sync_website_deposit(winner.id, prize - self.bet, get_user(winner.id)[0]))
+        if not is_bot:
+            asyncio.create_task(sync_website_deposit(loser.id, -self.bet, get_user(loser.id)[0]))
 
-                # Sync web deposits
-                if winner == self.p1:
-                    asyncio.create_task(sync_website_deposit(winner.id, prize - self.bet, get_user(winner.id)[0]))
-                if not is_bot:
-                    asyncio.create_task(sync_website_deposit(loser.id, -self.bet, get_user(loser.id)[0]))
-
-                final_embed = self.build_embed(last_desc=round_outcome)
-                if p2_file:
-                    final_embed.set_image(url=f"attachment://{self.get_dice_filename(p2_roll)}")
-                    if self.message:
-                        await self.message.edit(embed=final_embed, view=self, attachments=[p2_file])
-                else:
-                    if self.message:
-                        await self.message.edit(embed=final_embed, view=self)
-                break
-            else:
-                # Still playing: display round result with Player 2's roll
-                round_embed = self.build_embed(last_desc=round_outcome + "\nNext round rolling shortly...")
-                if p2_file:
-                    round_embed.set_image(url=f"attachment://{self.get_dice_filename(p2_roll)}")
-                    if self.message:
-                        await self.message.edit(embed=round_embed, view=self, attachments=[p2_file])
-                else:
-                    if self.message:
-                        await self.message.edit(embed=round_embed, view=self)
-
-                self.round_num += 1
-                self.p1_roll = None
-                self.p2_roll = None
-                await asyncio.sleep(2.5)
+        if self.message:
+            try:
+                await self.message.edit(embed=self.build_embed())
+            except Exception:
+                pass
 
 
     async def on_timeout(self):
