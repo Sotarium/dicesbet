@@ -1359,32 +1359,24 @@ DICE_FACES_DIR = os.path.join(os.path.dirname(__file__), "assets", "dice")
 
 
 class DiceDuelView(discord.ui.View):
-    def __init__(self, p1: discord.Member, bet: float, target_wins: int = 1):
+    def __init__(self, p1: discord.Member, bet: float):
         super().__init__(timeout=180)
         self.p1 = p1
         self.p2: discord.Member = None
         self.bet = bet
-        self.target_wins = target_wins
-        self.p1_score = 0
-        self.p2_score = 0
-        self.cursed = False  # Cursed mode: lowest roll wins
-        self.round_num = 1
-        self.game_id = random.randint(100, 999)
-        import hashlib
-        self.server_seed = hashlib.sha256(f"duel_{self.game_id}_{time.time()}".encode()).hexdigest()[:48]
-        self.p1_roll = None  # e.g. 93.70
-        self.p2_roll = None  # e.g. 29.11
-        self.p1_slot = "----"
-        self.p2_slot = "----"
+        self.p1_roll = None
+        self.p2_roll = None
+        self.p1_anim = "--.--"
+        self.p2_anim = "--.--"
         self.state = "lobby"  # "lobby", "rolling", "finished"
         self.message: discord.Message = None
 
-        # Lobby buttons
+        # Buttons
         self.join_btn = discord.ui.Button(label="Join Duel", style=discord.ButtonStyle.primary, row=0)
         self.join_btn.callback = self.handle_join
         self.add_item(self.join_btn)
 
-        self.bot_btn = discord.ui.Button(label="Call Bot", style=discord.ButtonStyle.secondary, row=0)
+        self.bot_btn = discord.ui.Button(label="Play vs Bot", style=discord.ButtonStyle.secondary, row=0)
         self.bot_btn.callback = self.handle_play_bot
         self.add_item(self.bot_btn)
 
@@ -1392,131 +1384,71 @@ class DiceDuelView(discord.ui.View):
         self.cancel_btn.callback = self.handle_cancel
         self.add_item(self.cancel_btn)
 
-    def _format_roll(self, roll_val) -> str:
-        if roll_val is None:
-            return "--.--"
-        return f"{roll_val:05.2f}"
-
-    def _render_slot_machine(self, roll_str: str) -> str:
-        """
-        Renders SolPrime's 4-digit roller cylinder look:
-           8   2   6   9
-        ▶  9   3   7   0  ◀
-           0   4   8   1
-        """
-        clean = roll_str.replace(".", "")
-        if len(clean) != 4 or not clean.isdigit():
-            clean = "0000"
-        digits = [int(d) for d in clean]
-        top = [str((d - 1) % 10) for d in digits]
-        mid = [str(d) for d in digits]
-        bot = [str((d + 1) % 10) for d in digits]
-
-        s_top = f"   {top[0]}    {top[1]}  . {top[2]}    {top[3]}"
-        s_mid = f">> {mid[0]}    {mid[1]}  . {mid[2]}    {mid[3]} <<"
-        s_bot = f"   {bot[0]}    {bot[1]}  . {bot[2]}    {bot[3]}"
-        return f"```arm\n{s_top}\n{s_mid}\n{s_bot}\n```"
-
-    def build_embed(self, last_desc: str = "") -> discord.Embed:
+    def build_embed(self) -> discord.Embed:
         prize = round(self.bet * 2 * 0.95, 2)
-        mode_header = "[ LOWEST ROLL WINS ]" if self.cursed else "[ HIGHEST ROLL WINS ]"
-        mode_sub = "Cursed table: the lowest roll takes the pot" if self.cursed else "Normal table: the highest roll takes the pot"
+        p1_name = self.p1.display_name
+        p2_name = self.p2.display_name if self.p2 else "DicesBet"
 
-        # ── 1. LOBBY STATE (SolPrime Duel Table Card) ──
         if self.state == "lobby":
             embed = discord.Embed(
-                title=f"DICE DUEL // GAME ID = {self.game_id}",
-                color=0x676fff,
+                title="DICE DUEL",
+                color=0x0083e5,
             )
             embed.description = (
-                f"**Stake:** `{self.bet:,.2f} dices`   |   **Pot:** `{self.bet * 2:,.2f} dices`\n"
-                f"`FFA`   `{ 'CURSED' if self.cursed else 'HIGH' }`   {mode_sub}\n\n"
+                f"**Stake:** `{self.bet:,.2f}` dices   |   **Pot:** `{self.bet * 2:,.2f}` dices\n"
+                f"**Payout:** `{prize:,.2f}` dices (1.90x)\n\n"
                 f"```arm\n"
-                f"+-------------------------------+\n"
-                f"| 2 PLAYERS                ROLL |\n"
-                f"+-------------------------------+\n"
-                f"|  {mode_header:^27}  |\n"
-                f"+-------------------------------+\n"
-                f"| P1: {self.p1.display_name[:12]:<12}         --.-- |\n"
-                f"| P2: WAITING...           --.-- |\n"
-                f"+-------------------------------+\n"
+                f"+-----------------------+-----------------------+\n"
+                f"| {p1_name[:16]:<21} | { 'WAITING...':<21} |\n"
+                f"| Roll: --.--           | Roll: --.--           |\n"
+                f"+-----------------------+-----------------------+\n"
                 f"```\n"
-                f"**Seat 1:** {self.p1.mention} *(Creator)*\n"
-                f"**Seat 2:** *Open Seat (1 left)*\n\n"
-                f"Click **Join Duel** or **Call Bot** to roll."
+                f"**Creator:** {self.p1.mention}\n"
+                f"Click **Play vs Bot** or wait for someone to click **Join Duel**."
             )
-            embed.set_footer(text="SolPrime · may numbers decide the winner..")
             return embed
 
-        # ── 2. ROLLING / PLAYING STATE ──
-        p1_name = self.p1.display_name
-        p2_name = self.p2.display_name if self.p2 else "Primey"
-        p1_display_roll = self._format_roll(self.p1_roll)
-        p2_display_roll = self._format_roll(self.p2_roll)
-
-        if self.state == "rolling":
+        elif self.state == "rolling":
             embed = discord.Embed(
-                title=f"DICE DUEL // GAME ID = {self.game_id}",
-                color=0x676fff,
+                title="DICE DUEL",
+                color=0x0083e5,
             )
-            
-            # Show the active roller cylinder
-            active_roller = self.p1_slot if self.p2_roll is None else self.p2_slot
-            roller_ui = self._render_slot_machine(active_roller)
-
             embed.description = (
-                f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
-                f"*{mode_sub}*\n\n"
-                f"{roller_ui}\n"
+                f"**Stake:** `{self.bet:,.2f}` dices   |   **Pot:** `{self.bet * 2:,.2f}` dices\n\n"
                 f"```arm\n"
-                f"+-------------------------------+\n"
-                f"| 2 PLAYERS                ROLL |\n"
-                f"+-------------------------------+\n"
-                f"|  {mode_header:^27}  |\n"
-                f"+-------------------------------+\n"
-                f"| P1: {p1_name[:12]:<12}         {p1_display_roll:>5} |\n"
-                f"| P2: {p2_name[:12]:<12}         {p2_display_roll:>5} |\n"
-                f"+-------------------------------+\n"
+                f"+-----------------------+-----------------------+\n"
+                f"| {p1_name[:16]:<21} | {p2_name[:16]:<21} |\n"
+                f"| Roll: {self.p1_anim:>5}           | Roll: {self.p2_anim:>5}           |\n"
+                f"+-----------------------+-----------------------+\n"
                 f"```\n"
-                f"{last_desc}\n\n"
-                f"*Rolling Provably Fair outcome...*"
+                f"*Rolling from 00.00 upwards...*"
             )
-            embed.set_footer(text=f"Server Seed: {self.server_seed[:32]}...")
             return embed
 
-        # ── 3. FINISHED STATE (Settled exactly as shown on SolPrime) ──
-        winner = self.p1 if self.p1_score >= self.target_wins else self.p2
-        is_p1_win = (winner == self.p1)
-        p1_indicator = ">>" if is_p1_win else "  "
-        p2_indicator = ">>" if not is_p1_win else "  "
+        else:
+            # Finished
+            winner = self.p1 if self.p1_roll >= self.p2_roll else self.p2
+            is_p1_win = (winner == self.p1)
+            p1_tag = "WINNER" if is_p1_win else "      "
+            p2_tag = "WINNER" if not is_p1_win else "      "
 
-        embed = discord.Embed(
-            title=f"DICE DUEL // GAME ID = {self.game_id}",
-            color=0x33f667 if is_p1_win else 0x9945ff,
-        )
-
-        final_roller = self._render_slot_machine(self._format_roll(self.p1_roll if is_p1_win else self.p2_roll))
-
-        embed.description = (
-            f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
-            f"*{mode_sub}*\n\n"
-            f"{final_roller}\n"
-            f"```arm\n"
-            f"+-------------------------------+\n"
-            f"| 2 PLAYERS                ROLL |\n"
-            f"+-------------------------------+\n"
-            f"|  {mode_header:^27}  |\n"
-            f"+-------------------------------+\n"
-            f"| P1: {p1_name[:12]:<12}      {p1_indicator}{p1_display_roll:>5} |\n"
-            f"| P2: {p2_name[:12]:<12}      {p2_indicator}{p2_display_roll:>5} |\n"
-            f"+-------------------------------+\n"
-            f"```\n"
-            f"**WINNER: {winner.display_name.upper()} WINS {prize:,.2f} DICES**\n"
-            f"*Payout settled instantly (1.90x)*\n\n"
-            f"**Server Seed:** `{self.server_seed}`"
-        )
-        embed.set_footer(text="Settled on Provably Fair Seed · SolPrime Dice Duels")
-        return embed
+            embed = discord.Embed(
+                title="DICE DUEL",
+                color=0x33f667 if is_p1_win else 0x0083e5,
+            )
+            embed.description = (
+                f"**Stake:** `{self.bet:,.2f}` dices   |   **Pot:** `{self.bet * 2:,.2f}` dices\n\n"
+                f"```arm\n"
+                f"+-----------------------+-----------------------+\n"
+                f"| {p1_name[:16]:<21} | {p2_name[:16]:<21} |\n"
+                f"| Roll: {self.p1_roll:05.2f}           | Roll: {self.p2_roll:05.2f}           |\n"
+                f"| [{p1_tag}]              | [{p2_tag}]              |\n"
+                f"+-----------------------+-----------------------+\n"
+                f"```\n"
+                f"**WINNER: {winner.display_name.upper()} WINS {prize:,.2f} DICES**\n"
+                f"*Payout settled instantly (1.90x)*"
+            )
+            return embed
 
     async def handle_cancel(self, interaction: discord.Interaction):
         if interaction.user.id != self.p1.id:
@@ -1541,15 +1473,14 @@ class DiceDuelView(discord.ui.View):
             await interaction.response.send_message("Duel is no longer in lobby.", ephemeral=True)
             return
         if interaction.user.id != self.p1.id:
-            await interaction.response.send_message("Only the lobby creator can start vs Bot.", ephemeral=True)
+            await interaction.response.send_message("Only the creator can start vs Bot.", ephemeral=True)
             return
 
         self.p2 = interaction.client.user
         self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"**{self.p2.display_name}** accepted the duel.")
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
 
@@ -1558,7 +1489,7 @@ class DiceDuelView(discord.ui.View):
             await interaction.response.send_message("Duel is no longer in lobby.", ephemeral=True)
             return
         if interaction.user.id == self.p1.id:
-            await interaction.response.send_message("You cannot play against yourself! Click Call Bot instead.", ephemeral=True)
+            await interaction.response.send_message("You cannot play against yourself! Click Play vs Bot instead.", ephemeral=True)
             return
 
         p2_bal = get_total_balance(interaction.user.id)
@@ -1569,7 +1500,6 @@ class DiceDuelView(discord.ui.View):
             )
             return
 
-        # Deduct bet from player 2
         add_balance(interaction.user.id, -self.bet, tx_type="bet")
         start_active_game(interaction.user.id, "DiceDuel", self.bet)
 
@@ -1577,69 +1507,46 @@ class DiceDuelView(discord.ui.View):
         self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"**{self.p2.display_name}** joined the table.")
-        await interaction.response.edit_message(embed=embed, view=self)
+        await interaction.response.edit_message(embed=self.build_embed(), view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
 
     async def run_duel_game(self):
-        """Runs the SolPrime 4-digit cylinder roll duel with real-time slot animations."""
+        """Rolls from 00.00 upwards in real-time increments to final player numbers."""
         is_bot = getattr(self.p2, "bot", False)
 
-        # ── 1. Roll for Player 1 ──
-        p1_val = round(random.uniform(0.01, 99.99), 2)
-        for _ in range(3):
-            tick = f"{random.randint(0, 99):02d}{random.randint(0, 99):02d}"
-            self.p1_slot = tick
+        # 1. Generate target numbers (00.01 - 99.99)
+        p1_target = round(random.uniform(0.01, 99.99), 2)
+        p2_target = round(random.uniform(0.01, 99.99), 2)
+        if p1_target == p2_target:
+            p2_target = round(min(99.99, p1_target + 0.05), 2)
+
+        self.p1_roll = p1_target
+        self.p2_roll = p2_target
+
+        # 2. Animate count-up from 00.00 to targets
+        steps = 5
+        for i in range(1, steps + 1):
+            ratio = i / steps
+            # Progress value upward
+            curr_p1 = round(p1_target * ratio, 2)
+            curr_p2 = round(p2_target * ratio, 2)
+            self.p1_anim = f"{curr_p1:05.2f}"
+            self.p2_anim = f"{curr_p2:05.2f}"
+
             if self.message:
                 try:
-                    await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p1.display_name}** is rolling..."))
+                    await self.message.edit(embed=self.build_embed())
                 except Exception:
                     pass
             await asyncio.sleep(0.7)
 
-        self.p1_roll = p1_val
-        self.p1_slot = f"{p1_val:05.2f}".replace(".", "")
-        if self.message:
-            try:
-                await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p1.display_name}** rolled **{p1_val:05.2f}**."))
-            except Exception:
-                pass
-        await asyncio.sleep(1.2)
-
-        # ── 2. Roll for Player 2 ──
-        if is_bot:
-            p2_val = round(random.uniform(0.01, 99.99), 2)
-            if p2_val == p1_val:
-                p2_val = round(min(99.99, p1_val + 0.05), 2)
-        else:
-            p2_val = round(random.uniform(0.01, 99.99), 2)
-
-        for _ in range(3):
-            tick = f"{random.randint(0, 99):02d}{random.randint(0, 99):02d}"
-            self.p2_slot = tick
-            if self.message:
-                try:
-                    await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p2.display_name}** is rolling..."))
-                except Exception:
-                    pass
-            await asyncio.sleep(0.7)
-
-        self.p2_roll = p2_val
-        self.p2_slot = f"{p2_val:05.2f}".replace(".", "")
-
-        # ── 3. Settle Outcome ──
-        if (not self.cursed and p1_val >= p2_val) or (self.cursed and p1_val <= p2_val):
-            winner = self.p1
-            loser = self.p2
-            self.p1_score = 1
-        else:
-            winner = self.p2
-            loser = self.p1
-            self.p2_score = 1
-
+        # 3. Final settlement
         self.state = "finished"
         prize = round(self.bet * 2 * 0.95, 2)
+
+        winner = self.p1 if p1_target >= p2_target else self.p2
+        loser = self.p2 if winner == self.p1 else self.p1
 
         if winner == self.p1 or not is_bot:
             add_balance(winner.id, prize, tx_type="duel_win")
@@ -1648,7 +1555,6 @@ class DiceDuelView(discord.ui.View):
         if not is_bot:
             end_active_game(self.p2.id)
 
-        # Sync web database
         if winner == self.p1:
             asyncio.create_task(sync_website_deposit(winner.id, prize - self.bet, get_user(winner.id)[0]))
         if not is_bot:
@@ -1660,16 +1566,13 @@ class DiceDuelView(discord.ui.View):
             except Exception:
                 pass
 
-
     async def on_timeout(self):
         if self.state == "finished":
             return
         if self.state == "lobby":
-            # Refund player 1
             add_balance(self.p1.id, self.bet, tx_type="duel_refund")
             end_active_game(self.p1.id)
-        elif self.state == "playing":
-            # Game timed out mid-play: refund both players
+        elif self.state == "rolling":
             add_balance(self.p1.id, self.bet, tx_type="duel_refund")
             if self.p2:
                 add_balance(self.p2.id, self.bet, tx_type="duel_refund")
@@ -1677,7 +1580,6 @@ class DiceDuelView(discord.ui.View):
             end_active_game(self.p1.id)
         self.state = "finished"
         self.clear_items()
-        # Delete the message so dead/refunded games don't clog the channel
         if self.message:
             try:
                 await self.message.delete()
@@ -1685,29 +1587,16 @@ class DiceDuelView(discord.ui.View):
                 pass
 
 
-@bot.tree.command(name="diceduel", description="Challenge another player to a dice duel!")
+@bot.tree.command(name="diceduel", description="Challenge another player or bot to a dice duel!")
 @app_commands.describe(
-    amount="Bet amount in dices each player puts in",
-    first_to="First to how many round wins? (1, 2, or 3)",
-    cursed="Cursed mode: lowest roll wins the pot instead of highest",
+    amount="Bet amount in dices",
 )
-@app_commands.choices(first_to=[
-    app_commands.Choice(name="First to 1 win", value=1),
-    app_commands.Choice(name="First to 2 wins", value=2),
-    app_commands.Choice(name="First to 3 wins", value=3),
-])
 async def diceduel(
     interaction: discord.Interaction,
     amount: float,
-    first_to: int = 1,
-    cursed: bool = False,
 ):
     if amount <= 0:
         await interaction.response.send_message("Bet amount must be greater than 0.", ephemeral=True)
-        return
-
-    if first_to not in [1, 2, 3]:
-        await interaction.response.send_message("Target wins must be 1, 2, or 3.", ephemeral=True)
         return
 
     p1_bal = get_total_balance(interaction.user.id)
@@ -1722,8 +1611,7 @@ async def diceduel(
     add_balance(interaction.user.id, -amount, tx_type="bet")
     start_active_game(interaction.user.id, "DiceDuel", amount)
 
-    view = DiceDuelView(p1=interaction.user, bet=amount, target_wins=first_to)
-    view.cursed = cursed
+    view = DiceDuelView(p1=interaction.user, bet=amount)
     embed = view.build_embed()
     await interaction.response.send_message(embed=embed, view=view)
     view.message = await interaction.original_response()
