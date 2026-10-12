@@ -1413,37 +1413,37 @@ class DiceDuelView(discord.ui.View):
         bot = [str((d + 1) % 10) for d in digits]
 
         s_top = f"   {top[0]}    {top[1]}  . {top[2]}    {top[3]}"
-        s_mid = f"▶  {mid[0]}    {mid[1]}  . {mid[2]}    {mid[3]}  ◀"
+        s_mid = f">> {mid[0]}    {mid[1]}  . {mid[2]}    {mid[3]} <<"
         s_bot = f"   {bot[0]}    {bot[1]}  . {bot[2]}    {bot[3]}"
-        return f"```prolog\n{s_top}\n{s_mid}\n{s_bot}\n```"
+        return f"```arm\n{s_top}\n{s_mid}\n{s_bot}\n```"
 
     def build_embed(self, last_desc: str = "") -> discord.Embed:
         prize = round(self.bet * 2 * 0.95, 2)
-        mode_header = "▼ LOWEST ROLL WINS" if self.cursed else "▲ HIGHEST ROLL WINS"
+        mode_header = "[ LOWEST ROLL WINS ]" if self.cursed else "[ HIGHEST ROLL WINS ]"
         mode_sub = "Cursed table: the lowest roll takes the pot" if self.cursed else "Normal table: the highest roll takes the pot"
 
         # ── 1. LOBBY STATE (SolPrime Duel Table Card) ──
         if self.state == "lobby":
             embed = discord.Embed(
-                title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+                title=f"DICE DUEL // GAME ID = {self.game_id}",
                 color=0x676fff,
             )
             embed.description = (
                 f"**Stake:** `{self.bet:,.2f} dices`   |   **Pot:** `{self.bet * 2:,.2f} dices`\n"
                 f"`FFA`   `{ 'CURSED' if self.cursed else 'HIGH' }`   {mode_sub}\n\n"
-                f"```prolog\n"
-                f"┌───────────────────────────────┐\n"
-                f"│ [2 Players]              roll │\n"
-                f"├───────────────────────────────┤\n"
-                f"│  {mode_header:^27}  │\n"
-                f"├───────────────────────────────┤\n"
-                f"│ 👤 {self.p1.display_name[:14]:<14}          --.-- │\n"
-                f"│ ⬜ Waiting for player...       --.-- │\n"
-                f"└───────────────────────────────┘\n"
+                f"```arm\n"
+                f"+-------------------------------+\n"
+                f"| 2 PLAYERS                ROLL |\n"
+                f"+-------------------------------+\n"
+                f"|  {mode_header:^27}  |\n"
+                f"+-------------------------------+\n"
+                f"| P1: {self.p1.display_name[:12]:<12}         --.-- |\n"
+                f"| P2: WAITING...           --.-- |\n"
+                f"+-------------------------------+\n"
                 f"```\n"
                 f"**Seat 1:** {self.p1.mention} *(Creator)*\n"
                 f"**Seat 2:** *Open Seat (1 left)*\n\n"
-                f"Click **Join Duel** or **Call Bot** to roll!"
+                f"Click **Join Duel** or **Call Bot** to roll."
             )
             embed.set_footer(text="SolPrime · may numbers decide the winner..")
             return embed
@@ -1456,7 +1456,7 @@ class DiceDuelView(discord.ui.View):
 
         if self.state == "rolling":
             embed = discord.Embed(
-                title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+                title=f"DICE DUEL // GAME ID = {self.game_id}",
                 color=0x676fff,
             )
             
@@ -1468,18 +1468,18 @@ class DiceDuelView(discord.ui.View):
                 f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
                 f"*{mode_sub}*\n\n"
                 f"{roller_ui}\n"
-                f"```prolog\n"
-                f"┌───────────────────────────────┐\n"
-                f"│ [2 Players]              roll │\n"
-                f"├───────────────────────────────┤\n"
-                f"│  {mode_header:^27}  │\n"
-                f"├───────────────────────────────┤\n"
-                f"│ 👤 {p1_name[:14]:<14}          {p1_display_roll:>5} │\n"
-                f"│ 👤 {p2_name[:14]:<14}          {p2_display_roll:>5} │\n"
-                f"└───────────────────────────────┘\n"
+                f"```arm\n"
+                f"+-------------------------------+\n"
+                f"| 2 PLAYERS                ROLL |\n"
+                f"+-------------------------------+\n"
+                f"|  {mode_header:^27}  |\n"
+                f"+-------------------------------+\n"
+                f"| P1: {p1_name[:12]:<12}         {p1_display_roll:>5} |\n"
+                f"| P2: {p2_name[:12]:<12}         {p2_display_roll:>5} |\n"
+                f"+-------------------------------+\n"
                 f"```\n"
                 f"{last_desc}\n\n"
-                f"🎲 *Rolling Provably Fair outcome...*"
+                f"*Rolling Provably Fair outcome...*"
             )
             embed.set_footer(text=f"Server Seed: {self.server_seed[:32]}...")
             return embed
@@ -1487,11 +1487,11 @@ class DiceDuelView(discord.ui.View):
         # ── 3. FINISHED STATE (Settled exactly as shown on SolPrime) ──
         winner = self.p1 if self.p1_score >= self.target_wins else self.p2
         is_p1_win = (winner == self.p1)
-        p1_arrow = "▲ " if is_p1_win else "  "
-        p2_arrow = "▲ " if not is_p1_win else "  "
+        p1_indicator = ">>" if is_p1_win else "  "
+        p2_indicator = ">>" if not is_p1_win else "  "
 
         embed = discord.Embed(
-            title=f"⚔️ DICE DUEL   `GAME ID = {self.game_id}`",
+            title=f"DICE DUEL // GAME ID = {self.game_id}",
             color=0x33f667 if is_p1_win else 0x9945ff,
         )
 
@@ -1501,19 +1501,19 @@ class DiceDuelView(discord.ui.View):
             f"**Pot:** `{self.bet * 2:,.2f} dices`   |   `FFA` `{ 'CURSED' if self.cursed else 'HIGH' }`\n"
             f"*{mode_sub}*\n\n"
             f"{final_roller}\n"
-            f"```prolog\n"
-            f"┌───────────────────────────────┐\n"
-            f"│ [2 Players]              roll │\n"
-            f"├───────────────────────────────┤\n"
-            f"│  {mode_header:^27}  │\n"
-            f"├───────────────────────────────┤\n"
-            f"│ 👤 {p1_name[:14]:<14}       {p1_arrow}{p1_display_roll:>5} │\n"
-            f"│ 👤 {p2_name[:14]:<14}       {p2_arrow}{p2_display_roll:>5} │\n"
-            f"└───────────────────────────────┘\n"
+            f"```arm\n"
+            f"+-------------------------------+\n"
+            f"| 2 PLAYERS                ROLL |\n"
+            f"+-------------------------------+\n"
+            f"|  {mode_header:^27}  |\n"
+            f"+-------------------------------+\n"
+            f"| P1: {p1_name[:12]:<12}      {p1_indicator}{p1_display_roll:>5} |\n"
+            f"| P2: {p2_name[:12]:<12}      {p2_indicator}{p2_display_roll:>5} |\n"
+            f"+-------------------------------+\n"
             f"```\n"
-            f"🏆 **{winner.display_name} wins `{prize:,.2f} dices`**\n"
+            f"**WINNER: {winner.display_name.upper()} WINS {prize:,.2f} DICES**\n"
             f"*Payout settled instantly (1.90x)*\n\n"
-            f"`#` **Server Seed:** `{self.server_seed}`"
+            f"**Server Seed:** `{self.server_seed}`"
         )
         embed.set_footer(text="Settled on Provably Fair Seed · SolPrime Dice Duels")
         return embed
@@ -1548,7 +1548,7 @@ class DiceDuelView(discord.ui.View):
         self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"⚔️ **{self.p2.display_name}** accepted the duel!")
+        embed = self.build_embed(last_desc=f"**{self.p2.display_name}** accepted the duel.")
         await interaction.response.edit_message(embed=embed, view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
@@ -1577,7 +1577,7 @@ class DiceDuelView(discord.ui.View):
         self.state = "rolling"
         self.clear_items()
 
-        embed = self.build_embed(last_desc=f"⚔️ **{self.p2.display_name}** joined the table!")
+        embed = self.build_embed(last_desc=f"**{self.p2.display_name}** joined the table.")
         await interaction.response.edit_message(embed=embed, view=self)
         self.message = await interaction.original_response()
         asyncio.create_task(self.run_duel_game())
@@ -1587,15 +1587,13 @@ class DiceDuelView(discord.ui.View):
         is_bot = getattr(self.p2, "bot", False)
 
         # ── 1. Roll for Player 1 ──
-        # Generate 4-digit roll e.g. 93.70
         p1_val = round(random.uniform(0.01, 99.99), 2)
-        # Animated roll slot ticker
         for _ in range(3):
             tick = f"{random.randint(0, 99):02d}{random.randint(0, 99):02d}"
             self.p1_slot = tick
             if self.message:
                 try:
-                    await self.message.edit(embed=self.build_embed(last_desc=f"🎲 **{self.p1.display_name}** is rolling..."))
+                    await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p1.display_name}** is rolling..."))
                 except Exception:
                     pass
             await asyncio.sleep(0.7)
@@ -1604,14 +1602,13 @@ class DiceDuelView(discord.ui.View):
         self.p1_slot = f"{p1_val:05.2f}".replace(".", "")
         if self.message:
             try:
-                await self.message.edit(embed=self.build_embed(last_desc=f"✅ **{self.p1.display_name}** rolled **{p1_val:05.2f}**!"))
+                await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p1.display_name}** rolled **{p1_val:05.2f}**."))
             except Exception:
                 pass
         await asyncio.sleep(1.2)
 
         # ── 2. Roll for Player 2 ──
         if is_bot:
-            # Fair roll with standard RNG
             p2_val = round(random.uniform(0.01, 99.99), 2)
             if p2_val == p1_val:
                 p2_val = round(min(99.99, p1_val + 0.05), 2)
@@ -1623,7 +1620,7 @@ class DiceDuelView(discord.ui.View):
             self.p2_slot = tick
             if self.message:
                 try:
-                    await self.message.edit(embed=self.build_embed(last_desc=f"🎲 **{self.p2.display_name}** is rolling..."))
+                    await self.message.edit(embed=self.build_embed(last_desc=f"**{self.p2.display_name}** is rolling..."))
                 except Exception:
                     pass
             await asyncio.sleep(0.7)
@@ -1632,7 +1629,6 @@ class DiceDuelView(discord.ui.View):
         self.p2_slot = f"{p2_val:05.2f}".replace(".", "")
 
         # ── 3. Settle Outcome ──
-        # In cursed mode, lowest roll wins. In normal mode, highest roll wins.
         if (not self.cursed and p1_val >= p2_val) or (self.cursed and p1_val <= p2_val):
             winner = self.p1
             loser = self.p2
